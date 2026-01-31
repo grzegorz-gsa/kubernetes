@@ -1,0 +1,1022 @@
+3. Grzegorz Sanecki
+00ubuntu
+
+Public IP address: 20.234.82.227
+Private IP address: 10.4.0.13
+Login: kurs
+Hasło: 3Szkolenie.admin2
+Dostęp przez ssh, rdp
+
+00control
+
+Private IP address: 10.4.0.53
+Login: kurs
+Hasło: 3Szkolenie.admin2
+Dostęp przez ssh z maszyny 00ubuntu
+
+01worker
+
+Private IP address: 10.4.0.103
+Login: kurs
+Hasło: 3Szkolenie.admin2
+Dostęp przez ssh z maszyny 00ubuntu
+
+02worker
+
+Private IP address: 10.4.0.203
+Login: kurs
+Hasło: 3Szkolenie.admin2
+Dostęp przez ssh z maszyny 00ubuntu
+
+
+  ###############################################################
+   
+   30.01.2026 
+    
+    Slajdy K8s
+
+    https://transfer.pcloud.com/download.html?code=5Z3BgK5ZAt1WD6qqGXYZH3iSZMRBDyzlooYJsrXCdGkzY1pQvac77
+
+Instalacja
+
+snap install microk8s --classic 
+microk8s status
+microk8s config
+microk8s kubectl get all
+
+  5  microk8s kubectl get nodes
+    6  microk8s kubectl create deployment test-nginx --image=nginx
+    7  microk8s kubectl get pods
+   10  microk8s kubectl get pods --namespace default
+   11  microk8s kubectl get pods --all-namespaces
+   12  alias kct="microk8s kubectl"
+   13  kct get pods
+   16  alias | grep kube >> .bashrc
+   17  cat .bashrc
+   
+   19  kct exec test-nginx-b6dfcf6bd-txtvq -- bash
+   20  kct exec -it test-nginx-b6dfcf6bd-txtvq -- bash
+   21  kct get pods
+   22  kct exec test-nginx-b6dfcf6bd-txtvq -- env
+   23  kct logs test-nginx-b6dfcf6bd-txtvq
+
+26  kct scale deployment test-nginx --replicas=3
+   27  kct get pods
+
+kct expose deployment test-nginx --type="NodePort" --port 80
+   30  kct get services test-nginx
+   31  curl 10.152.183.183
+   32  kct get deployment
+   33* kct 
+   34  microk8s kubectl delete deployment test-nginx 
+   35  kct get pods
+   36  kct get services
+   37  curl 10.152.183.183
+   38  microk8s kubectl delete service test-nginx 
+   39  kct get services
+
+ kct get pods -o wide
+   53  microk8s enable dashboard
+   54  kct get services -n kube-system
+
+56  kct describe secret -n kube-system microk8s-dashboard-token | grep ^token 
+   57  nano token
+   
+kct port-forward -n kube-system service/kubernetes-dashboard --address 0.0.0.0 10443:443&
+   
+   
+   63  kct top node
+   64  kct top pod
+   65  kct exec -it test-nginx-b6dfcf6bd-5bxnd -- bash
+   yes > /dev/null
+   
+   
+microk8s enable observability
+   microk8s kubectl get services -n observability
+    
+microk8s kubectl get pods -n observability
+   microk8s kubectl port-forward -n observability service/prometheus-operated --address 0.0.0.0 9090:9090&
+   microk8s kubectl port-forward -n observability service/kube-prom-stack-grafana --address 0.0.0.0 3000:80&
+   
+   default user/password on Grafana, it [admin/prom-operator]
+
+Dashboard ID https://grafana.com/grafana/dashboards/18283-kubernetes-dashboard/
+
+
+26  microk8s enable helm3
+  127  microk8s helm3 version
+  128  microk8s helm3 search hub haproxy
+  129  microk8s helm3 repo add bitnami https://charts.bitnami.com/bitnami 
+  130  microk8s helm3 repo list
+
+# Dodaj repo helm
+microk8s helm repo add portainer https://portainer.github.io/k8s/
+microk8s helm repo update
+
+# Zainstaluj Portainera
+microk8s helm install portainer portainer/portainer \
+  --namespace portainer \
+  --create-namespace \
+  --set service.type=NodePort
+3. Skonfiguruj dostęp
+Sprawdź status instalacji:
+
+microk8s kubectl get pods -n portainer
+microk8s kubectl get svc -n portainer
+Uzyskaj dostęp do Portainera:
+
+# Jeśli używasz NodePort, sprawdź port:
+microk8s kubectl get svc -n portainer portainer -o jsonpath='{.spec.ports[0].nodePort}'
+
+# Lub utwórz port-forward dla łatwiejszego dostępu:
+microk8s kubectl port-forward -n portainer svc/portainer 9000:9000
+4. Konfiguracja początkowa
+Otwórz przeglądarkę pod adresem: http://localhost:9000 (lub http://<IP-MASZYNY>:<NODE_PORT>)
+
+Utwórz hasło administratora
+
+Połącz Portainer z klastrem:
+
+Wybierz "Local" environment
+
+Lub skorzystaj z endpointu: https://kubernetes.default.svc
+
+
+
+
+###################
+   HPA
+   ###################
+   
+   
+   
+vi my-nginx.yml 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: my-nginx
+  name: my-nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: my-nginx
+  template:
+    metadata:
+      labels:
+        run: my-nginx
+    spec:
+      containers:
+      - image: nginx
+        name: my-nginx
+        resources:
+          # requests : set minimum required resources when creating pods
+          requests:
+            # 250m : 0.25 CPU
+            cpu: 250m
+            memory: 64Mi
+          # set maximum resources
+          limits:
+            cpu: 500m
+            memory: 128Mi
+            
+            
+            
+vi hpa.yml 
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-nginx-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    # target Deployment name
+    name: my-nginx
+  minReplicas: 1
+  # maximum number of replicas
+  maxReplicas: 4
+  metrics:
+  - type: Resource
+    resource:
+      # scale if target CPU utilization is over 20%
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 20
+        
+        
+         154  nano my-nginx.yml
+  155  nano hpa.yml
+  156  kct apply -f my-nginx.yml -f hpa.yml 
+  157  kct get pods
+  158  kct get pods --all-namespaces
+  159  top
+  160  kct get hpa
+  161  kct top pods
+  162  kct get hpa
+  163  cat token 
+  164  kct get hpa
+
+Wygenerowanie obciążenia na podzie
+
+kct exec -it my-nginx-7c748dfbd6-4nd82 -- bash
+yes > /dev/null
+dd if=/dev/zero of=/dev/null
+
+hasło do Wordpress z helma
+
+użytkownik: user
+echo $(microk8s kubectl get secret --namespace default wp-wordpress -o jsonpath="{.data.wordpress-password}" | base64 -d)
+
+##############################################
+Serwer NFS i podłączenie magazynu danych
+################################################
+
+  1  apt -y install nfs-kernel-server
+    2  mkdir /home/nfsshare
+    3  chmod 777 /home/nfsshare/
+    4  nano /etc/exports 
+    5  exportfs -a
+    6  cat /etc/exports 
+    7  systemctl restart nfs-server
+    
+    zawartość /etc/exports
+    
+    /home/nfsshare 10.4.0.0/24(rw)
+
+vi nfs-pv.yml 
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  # any PV name
+  name: nfs-pv
+spec:
+  capacity:
+    # storage size
+    storage: 10Gi
+  accessModes:
+    # Access Modes:
+    # - ReadWriteMany (RW from multi nodes)
+    # - ReadWriteOnce (RW from a node)
+    # - ReadOnlyMany (R from multi nodes)
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy:
+    # retain even if pods terminate
+    Retain
+  storageClassName: nfs-server
+  nfs:
+    # NFS server's definition
+    path: /home/nfsshare
+    server: 10.4.0.10
+    readOnly: false
+
+PVC
+
+vi nfs-pvc.yml 
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  # any PVC name
+  name: nfs-pvc
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+     requests:
+       storage: 10Gi
+  storageClassName: nfs-server
+  
+  
+  
+PersistentVolume to:
+
+
+fizyczny lub logiczny zasób storage
+
+
+tworzony przez administratora klastra (albo automatycznie przez StorageClass)
+
+
+niezależny od Podów
+
+PV opisuje:
+
+
+rozmiar (np. 10Gi)
+
+
+typ dostępu (ReadWriteOnce, ReadOnlyMany, ReadWriteMany)
+
+
+backend storage (EBS, NFS, Ceph, lokalny dysk itd.)
+
+
+politykę usuwania (Retain, Delete, Recycle)
+
+📌 PV istnieje nawet wtedy, gdy żadna aplikacja go nie używa.
+📄 PVC (PersistentVolumeClaim) – czego aplikacja potrzebuje
+
+
+
+PersistentVolumeClaim to:
+
+
+żądanie storage przez użytkownika / aplikację
+
+
+deklaracja: „potrzebuję dysku o takich parametrach”
+
+
+używany bezpośrednio przez Pod
+
+PVC określa:
+
+
+wymagany rozmiar
+
+
+tryb dostępu
+
+
+opcjonalnie StorageClass
+
+Kubernetes:
+
+
+automatycznie dopasowuje PVC do odpowiedniego PV
+
+
+lub tworzy PV dynamicznie (jeśli używasz StorageClass)
+
+
+Deployment z użyciem PVC na NFS
+
+
+vi nginx-nfs.yml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # any Deployment name
+  name: nginx-nfs
+  labels:
+    name: nginx-nfs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-nfs
+  template:
+    metadata:
+      labels:
+        app: nginx-nfs
+    spec:
+      containers:
+      - name: nginx-nfs
+        image: nginx
+        ports:
+          - name: web
+            containerPort: 80
+        volumeMounts:
+          - name: nfs-share
+            # mount point in container
+            mountPath: /usr/share/nginx/html
+      volumes:
+        - name: nfs-share
+          persistentVolumeClaim:
+            # PVC name you created
+            claimName: nfs-pvc
+
+
+ 69  nano nfs-pv.yml
+   70  kct apply -f nfs-pv.yml 
+   71  kct get pv
+   72  cat token 
+   73  nanmo nfs-pvc.yml 
+   74  nano nfs-pvc.yml 
+   75  kct apply -f nfs-pvc.yml 
+   76  kct get pvc
+   77  nano nginx-nfs.yml
+
+   80  kct apply -f nginx-nfs.yml 
+
+   83  kct logs nginx-nfs-57fb56bc6b-dblg7
+
+ 
+   86  apt -y install nfs-common
+   87  kct get pods -o wide
+
+  kct expose deployment nginx-nfs --type="NodePort" --port 80 
+   95  kct get services
+   96  kct exec nginx-nfs-57fb56bc6b-dblg7 -- sh -c "echo 'NFS Persistent Storage Test' > /usr/share/nginx/html/index.html" 
+   97  curl 10.152.183.208
+   
+   na serwerze NFS
+   
+     11  ls -al /home/nfsshare/
+   12  cat /home/nfsshare/index.html 
+   13  nano /home/nfsshare/index.html   # dodanie wpisu
+
+różnica między NodePort, ClusterIP i LoadBalancer w Kubernetes:
+ClusterIP (domyślny)
+Cel: Wewnętrzna komunikacja wewnątrz klastra
+Adresacja: Tylko wewnętrzny IP przydzielany z puli ClusterIP
+Dostępność: Tylko z wewnątrz klastra
+Użycie: Komunikacja między mikroserwisami
+
+type: ClusterIP
+NodePort
+Cel: Udostępnienie aplikacji na zewnątrz klastra przez statyczny port
+Adresacja: ClusterIP + port na każdym węźle (30000-32767)
+Dostępność: Z zewnątrz przez <IP-węzła>:<NodePort>
+Użycie: Development/testy, gdy nie ma LoadBalancera
+
+type: NodePort# np. dostęp przez node-ip:30567
+LoadBalancer
+Cel: Automatyczne udostępnienie aplikacji przez zewnętrzny load balancer
+Adresacja: ClusterIP + NodePort + zewnętrzny adres IP od cloud providera
+Dostępność: Przez zewnętrzny adres IP/DNS
+Użycie: Produkcja w środowiskach cloud (AWS, GCP, Azure)
+
+type: LoadBalancer
+Praktyczne porównanie:
+
+
+
+Przykład hierarchii:
+
+LoadBalancer (publiczny) → NodePort (na każdym węźle) → ClusterIP (wewnętrzny) → Pod
+Kiedy używać:
+ClusterIP: Komunikacja wewnętrzna między składnikami
+NodePort: Testy, development, on-premise bez load balancera
+LoadBalancer: Aplikacje produkcyjne w chmurze
+
+NFS dynamic prov
+
+
+ 167  microk8s helm3 repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+  168  microk8s helm3 repo list
+  169  microk8s helm3 repo update
+  170  microk8s helm3 install nfs-client -n kube-system --set nfs.server=10.4.0.10 --set nfs.path=/home/nfsshare nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
+  
+  
+vi my-pvc.yml 
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-provisioner
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # specify StorageClass name
+  storageClassName: nfs-client
+  resources:
+    requests:
+      # volume size
+      storage: 5Gi
+      
+##############################################
+[1]   Exit 1                  microk8s kubectl port-forward -n observability service/prometheus-operated --address 0.0.0.0 9090:9090
+[2]-  Exit 1                  microk8s kubectl port-forward -n observability service/kube-prom-stack-grafana --address 0.0.0.0 3000:80
+[3]+  Exit 1                  microk8s kubectl port-forward -n kube-system service/kubernetes-dashboard --address 0.0.0.0 10443:443
+#############################################
+
+Pod na bazie providera
+
+vi my-pod.yml 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-nginx
+spec:
+  selector:
+    matchLabels:
+      run: my-nginx
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        run: my-nginx
+    spec:
+      containers:
+      - name: my-nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: nginx-pvc
+      volumes:
+        - name: nginx-pvc
+          persistentVolumeClaim:
+            # PVC name you created
+            claimName: my-provisioner
+
+
+Ingress to obiekt API w Kubernetes, który zarządza zewnętrznym dostępem do usług (Services) w klastrze, zazwyczaj HTTP/HTTPS.
+Po co to jest?
+Routowanie ruchu HTTP/HTTPS do odpowiednich usług
+Terminacja SSL/TLS
+Wirtualne hosty (host-based routing)
+Ścieżki URL (path-based routing)
+Load balancing na poziomie aplikacji
+Jak działa?
+text
+Użytkownik → Ingress Controller → Ingress Resource → Service → Pod
+Przykład manifestu Ingress:
+yaml
+apiVersion: networking.k8s.io/v1kind: Ingress
+metadata:
+  name: my-app-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /spec:
+  rules:
+  - host: moja-aplikacja.pl
+    http:
+      paths:
+      - path: /app1
+        pathType: Prefix
+        backend:
+          service:
+            name: app1-service
+            port:
+              number: 80
+      - path: /app2
+        pathType: Prefix
+        backend:
+          service:
+            name: app2-service
+            port:
+              number: 80
+W MicroK8s:
+bash
+# Włączenie Ingress (NGINX)
+microk8s enable ingress
+# Sprawdzenie
+microk8s kubectl get pods -n ingress
+NetworkPolicyCzym jest?
+NetworkPolicy to firewall na poziomie klastra Kubernetes, który kontroluje przepływ ruchu sieciowego między podami.
+Po co to jest?
+Segmentacja sieci - "least privilege" dla podów
+Izolacja między namespace'ami
+Kontrola ruchu przychodzącego (ingress) i wychodzącego (egress)
+Zabezpieczenie przed lateral movementKluczowe koncepcje:
+Pod selector - do których podów stosować politykę
+Ingress rules - kto może się łączyć DO tych podów
+Egress rules - z kim te pody mogą się łączyć
+Policy types - które reguły są aktywne
+Przykład NetworkPolicy:
+yaml
+apiVersion: networking.k8s.io/v1kind: NetworkPolicymetadata:
+  name: allow-frontend-to-backend
+  namespace: productionspec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+W MicroK8s:
+bash
+# Sprawdzenie czy NetworkPolicy jest dostępne
+microk8s status
+# Jeśli nie ma, włącz CNI które wspiera NetworkPolicy
+microk8s enable cilium  # lub calico, weave
+
+Mini projekt końcowy 
+Zbuduj w namespace project:
+frontend (nginx) + api (np. http-echo / prosta apka)
+
+Ingress z hostami: front.local, api.local
+
+
+PVC dla frontend i wgranie własnego index.html
+
+
+HPA dla frontend (min 2 max 6)
+
+
+RBAC: konto auditor (read-only), konto deployer (może deployować tylko w project)
+
+
+NetworkPolicy: api dostępne tylko z frontend
+
+
+Założenia:
+
+
+działa MicroK8s, masz kubectl (albo używaj microk8s kubectl)
+
+
+włączone: dns, ingress, hostpath-storage, metrics-server
+microk8s enable dns ingress hostpath-storage metrics-server
+KROK 1 — Namespace project
+
+kubectl create ns project
+kubectl config set-context --current --namespace=project
+Sprawdź:
+
+kubectl get ns
+KROK 2 — API (prosty serwis http-echo)2.1 Deployment + Service dla API
+Zapisz jako api.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: project
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: hashicorp/http-echo:1.0.0
+        args:
+          - "-text=Hello from API"
+          - "-listen=:5678"
+        ports:
+        - containerPort: 5678
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: project
+spec:
+  selector:
+    app: api
+  ports:
+  - name: http
+    port: 80
+    targetPort: 5678
+  type: ClusterIP
+
+Zastosuj:
+
+kubectl apply -f api.yaml
+kubectl get pods,svc
+Test z klastra:
+
+kubectl run -it --rm curl --image=curlimages/curl --restart=Never -- \
+  curl -sS http://api
+KROK 3 — Frontend (nginx) + PVC + własny index.html3.1 PVC dla frontendu
+frontend-pvc.yaml:
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: frontend-pvc
+  namespace: project
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+kubectl apply -f frontend-pvc.yaml
+kubectl get pvc
+3.2 ConfigMap z index.html (prościej niż ręcznie wgrywać)
+frontend-config.yaml:
+    
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-html
+  namespace: project
+data:
+  index.html: |
+    <html>
+    <head><title>Frontend</title></head>
+    <body>
+      <h1>Frontend działa </h1>
+      <p>API pod /api (przez Ingress)</p>
+    </body>
+    </html>
+
+kubectl apply -f frontend-config.yaml
+3.3 Deployment + Service frontendu (nginx + PVC)
+frontend.yaml:
+    
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: project
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      initContainers:
+      - name: init-html
+        image: busybox:1.36
+        command: ["sh","-c","cp /cm/index.html /data/index.html"]
+        volumeMounts:
+        - name: html-cm
+          mountPath: /cm
+        - name: data
+          mountPath: /data
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html-cm
+        configMap:
+          name: frontend-html
+      - name: data
+        persistentVolumeClaim:
+          claimName: frontend-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: project
+spec:
+  selector:
+    app: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  type: ClusterIP
+
+Zastosuj:
+
+kubectl apply -f frontend.yaml
+kubectl get pods,svc
+Test:
+
+kubectl run -it --rm curl2 --image=curlimages/curl --restart=Never -- \
+  curl -sS http://frontend
+Powinieneś zobaczyć HTML z Frontend działa ✅.
+Uwaga (ważna): Ten lab używa RWO PVC + 2 repliki. W MicroK8s hostpath-storage zwykle działa na jednym nodzie, ale w “prawdziwym” multi-node to może być problem. Do labu OK.
+
+KROK 4 — Ingress: front.local i api.local + routing /api
+Zrobimy:
+
+
+front.local → frontend (oraz /api → api)
+
+
+api.local → api
+
+ingress.yaml:
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: project-ingress
+  namespace: project
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  rules:
+  - host: front.local
+    http:
+      paths:
+      - path: /api(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: api
+            port:
+              number: 80
+      - path: /(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+  - host: api.local
+    http:
+      paths:
+      - path: /(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: api
+            port:
+              number: 80
+
+Zastosuj:
+
+kubectl apply -f ingress.yaml
+kubectl get ing
+4.1 /etc/hosts na hoście
+Znajdź IP maszyny:
+
+ip a | grep inet
+Dopisz (podmień IP):
+
+sudo sh -c 'echo "10.0.0.50 front.local api.local" >> /etc/hosts'
+Test z hosta:
+
+curl http://front.local/
+curl http://front.local/api
+curl http://api.local/
+KROK 5 — HPA dla frontend (min 2, max 6)
+HPA wymaga metrics-server (już masz). Tworzymy HPA CPU=50%.
+
+kubectl autoscale deployment frontend --min=2 --max=6 --cpu-percent=50
+kubectl get hpa
+Wygeneruj load:
+
+kubectl run -it --rm loadgen --image=busybox --restart=Never -- sh
+W środku:
+
+while true; do wget -q -O- http://frontend > /dev/null; done
+W innym terminalu:
+
+kubectl get hpa -w
+kubectl get pods -l app=frontend -w
+Checkpoint: repliki rosną do 3..6 i potem spadają.
+KROK 6 — RBAC: auditor (read-only) i deployer (tylko deploy w project)6.1 ServiceAccounts
+
+kubectl -n project create serviceaccount auditor
+kubectl -n project create serviceaccount deployer
+6.2 Role dla auditor (read-only)
+rbac-auditor.yaml:
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: project-readonly
+  namespace: project
+rules:
+- apiGroups: ["", "apps", "autoscaling", "networking.k8s.io"]
+  resources: ["pods","services","deployments","replicasets","configmaps","events","ingresses","horizontalpodautoscalers","persistentvolumeclaims"]
+  verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auditor-binding
+  namespace: project
+subjects:
+- kind: ServiceAccount
+  name: auditor
+  namespace: project
+roleRef:
+  kind: Role
+  name: project-readonly
+  apiGroup: rbac.authorization.k8s.io
+  
+  
+  
+
+kubectl apply -f rbac-auditor.yaml
+6.3 Role dla deployer (może wdrażać, ale tylko w namespace project)
+rbac-deployer.yaml:
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: project-deployer
+  namespace: project
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments","replicasets"]
+  verbs: ["create","delete","get","list","watch","patch","update"]
+- apiGroups: [""]
+  resources: ["pods","services","configmaps"]
+  verbs: ["create","delete","get","list","watch","patch","update"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["create","delete","get","list","watch","patch","update"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["create","delete","get","list","watch","patch","update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer-binding
+  namespace: project
+subjects:
+- kind: ServiceAccount
+  name: deployer
+  namespace: project
+roleRef:
+  kind: Role
+  name: project-deployer
+  apiGroup: rbac.authorization.k8s.io
+
+
+kubectl apply -f rbac-deployer.yaml
+6.4 Test “can-i”
+Auditor:
+
+kubectl auth can-i get pods -n project --as=system:serviceaccount:project:auditor
+kubectl auth can-i delete pod -n project --as=system:serviceaccount:project:auditor
+Deployer:
+
+kubectl auth can-i create deployment -n project --as=system:serviceaccount:project:deployer
+kubectl auth can-i create namespace --as=system:serviceaccount:project:deployer
+Checkpoint: auditor nie może usuwać, deployer nie może działać poza namespace.
+KROK 7 — NetworkPolicy: API dostępne tylko z Frontendu
+Najpierw upewnij się, że frontend ma etykietę app=frontend, a api ma app=api (w naszych YAML ma).
+7.1 Default deny dla API (Ingress)
+np-api-deny.yaml:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-deny-ingress
+  namespace: project
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+  - Ingress
+
+7.2 Allow tylko z frontend
+np-api-allow-frontend.yaml:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-allow-from-frontend
+  namespace: project
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 5678
+
+Zastosuj:
+
+kubectl apply -f np-api-deny.yaml
+kubectl apply -f np-api-allow-frontend.yaml
+kubectl get networkpolicy
+7.3 Test: z “losowego” poda brak dostępu
+
+kubectl -n project run -it --rm curlbad --image=curlimages/curl --restart=Never -- \
+  curl -m 3 -sS http://api || echo "BLOCKED"
+7.4 Test: z frontendu dostęp OK
+
+FPOD=$(kubectl -n project get pod -l app=frontend -o jsonpath='{.items[0].metadata.name}')
+kubectl -n project exec -it "$FPOD" -- sh -c "apt-get update >/dev/null 2>&1 || true; curl http://api:80 || true"
+Checkpoint: curlbad = zablokowane, a z frontendu = “Hello from API”.
+Jeśli NetworkPolicy “nie działa” w Twoim MicroK8s, to znaczy, że używany addon/CNI nie egzekwuje policy. Daj znać, podpowiem jak włączyć CNI wspierające NetworkPolicy (np. Calico) w MicroK8s.
+KROK 8 — Deliverables (komendy do oddania)
+
+kubectl get all -n project
+kubectl get ing -n project
+kubectl get hpa -n project
+kubectl auth can-i list pods -n project --as=system:serviceaccount:project:auditor
+kubectl auth can-i create deployment -n project --as=system:serviceaccount:project:deployer
+kubectl describe hpa -n project frontend
