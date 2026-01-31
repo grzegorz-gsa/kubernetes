@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-html
+  namespace: project
+data:
+  index.html: |
+    <html>
+    <head><title>Frontend</title></head>
+    <body>
+      <h1>Frontend działa </h1>
+      <p>API pod /api (przez Ingress)</p>
+    </body>
+    </html>

@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: my-nginx
+  name: my-nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: my-nginx
+  template:
+    metadata:
+      labels:
+        run: my-nginx
+    spec:
+      containers:
+      - image: nginx
+        name: my-nginx
+        resources:
+          # requests : set minimum required resources when creating pods
+          requests:
+            # 250m : 0.25 CPU
+            cpu: 250m
+            memory: 64Mi
+          # set maximum resources
+          limits:
+            cpu: 500m
+            memory: 128Mi
