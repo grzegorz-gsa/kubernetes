@@ -1,0 +1,164 @@
+---
+- name: Install Kubernetes on Ubuntu nodes and join cluster
+  hosts: k8s_nodes
+  become: true
+  vars:
+    # UZUPEŁNIJ: wklej pełne polecenie kubeadm join z control-plane
+    # przykład: kubeadm join 10.0.0.10:6443 --token abc.def --discovery-token-ca-cert-hash sha256:...
+    kubeadm_join_command: "kubeadm join 10.4.0.13:6443 --token c6shxc.qrofxfnsylwa3j4t --discovery-token-ca-cert-hash sha256:a67fbf799d6f1cfdeebbf06a3309c56ff0da881ddffe8f259c53d832fa459f95"
+
+    # Wersja K8s (repo z pkgs.k8s.io). Przykładowo v1.35 - dopasuj do klastra.
+    k8s_minor: "v1.35"
+
+    # Pakiety: kubelet/kubeadm/kubectl — na workerach kubectl jest opcjonalny, ale często wygodny.
+    k8s_packages:
+      - kubelet
+      - kubeadm
+      - kubectl
+
+  pre_tasks:
+    - name: Fail if kubeadm_join_command is not set
+      ansible.builtin.fail:
+        msg: "Ustaw zmienną kubeadm_join_command (wklej pełne polecenie kubeadm join)."
+      when: kubeadm_join_command | trim == ""
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install base dependencies
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gpg
+          - apt-transport-https
+          - software-properties-common
+        state: present
+
+    - name: Disable swap (runtime)
+      ansible.builtin.command: swapoff -a
+      changed_when: false
+
+    - name: Disable swap in /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\s+swap\s+.*)$'
+        replace: '# \1'
+
+    - name: Load required kernel modules
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+    - name: Ensure kernel modules are loaded
+      ansible.builtin.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Set sysctl params for Kubernetes networking
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+    - name: Apply sysctl params
+      ansible.builtin.command: sysctl --system
+      changed_when: false
+
+    - name: Install containerd
+      ansible.builtin.apt:
+        name: containerd
+        state: present
+
+    - name: Create containerd config directory
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: "0755"
+
+    - name: Generate default containerd config (only if missing)
+      ansible.builtin.command: containerd config default
+      register: containerd_default_config
+      changed_when: false
+
+    - name: Write containerd config.toml
+      ansible.builtin.copy:
+        dest: /etc/containerd/config.toml
+        content: "{{ containerd_default_config.stdout }}"
+        mode: "0644"
+
+    - name: Enable SystemdCgroup in containerd config
+      ansible.builtin.replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+
+    - name: Restart and enable containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+        enabled: true
+
+    - name: Add Kubernetes apt keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add Kubernetes repo key (pkgs.k8s.io)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ k8s_minor }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        executable: /bin/bash
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Add Kubernetes repo
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_minor }}/deb/ /"
+        state: present
+        filename: kubernetes
+
+    - name: Update apt cache after adding Kubernetes repo
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install Kubernetes packages
+      ansible.builtin.apt:
+        name: "{{ k8s_packages }}"
+        state: present
+
+    - name: Hold Kubernetes packages (prevent unintended upgrades)
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: "{{ k8s_packages }}"
+
+    - name: Enable kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+
+    - name: Check if node is already joined (kubelet.conf exists)
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Join the cluster
+      ansible.builtin.command: "{{ kubeadm_join_command }}"
+      when: not kubelet_conf.stat.exists
+      register: join_result
+      changed_when: "'This node has joined the cluster' in join_result.stdout or join_result.rc == 0"
+
+    - name: Print join output
+      ansible.builtin.debug:
+        var: join_result.stdout_lines
+      when: join_result is defined
